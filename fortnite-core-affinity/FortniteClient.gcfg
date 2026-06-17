@@ -1,87 +1,86 @@
 # ============================================================
 # Fortnite per-thread core layout for an i9-9900 (8C/8T, HT OFF)
-# Logical CPUs 0-7. Device IRQ/affinity already pinned by the user:
+# Affinity is written as a HEX BITMASK (bit N = core N), the form the
+# tool emits (seen as "0X2" in audiodg). This is the clean way to target
+# the non-contiguous device cores in a single token.
+#
+# Bitmask reference (bit N = core N):
+#   core 0=0X1  1=0X2  2=0X4  3=0X8  4=0X10  5=0X20  6=0X40  7=0X80
+#   device cores 0,2,4,6 = 0X55     clean cores 1,3,5,7 = 0XAA
+#   all cores = 0XFF
+#
+# Device IRQ/affinity already pinned by the user:
 #   Core 0 = Ethernet/NIC      Core 2 = USB
 #   Core 4 = Audio controller  Core 6 = GPU
 #   Cores 1, 3, 5, 7 = CLEAN (no device IRQ load)
 #
 # The four CLEAN cores each host one heavy engine thread, isolated:
-#   1 = GameThread   3 = RenderThread 0   5 = RHISubmissionThread   7 = RHIThread
-#
-# SYNTAX: thread lines are comma-delimited:
-#   Name=Priority,Affinity,DisableBoost,-1,-1,-1,0,False,False   (9 fields)
-# The Affinity field is ONE token. Only these forms are safe here, and
-# all match tokens that appear in real lines of this config:
-#   ALL  |  single core (e.g. 5)  |  contiguous range (e.g. 4-6)  |  GROUP:NAME
-# A comma list like 0,2,4,6 is NOT safe in a thread line -- the commas
-# are read as extra fields and corrupt the row. Since the device cores
-# 0/2/4/6 are non-contiguous, the background pool is pinned to single
-# device cores, round-robined, so it never lands on a clean core.
+#   1 (0X2) = GameThread          3 (0X8)  = RenderThread 0
+#   5 (0X20) = RHISubmissionThread 7 (0X80) = RHIThread
+# Background/worker pool = device cores only -> 0X55 (never the clean cores).
 # ============================================================
-[FortniteClient-Win64-Shipping.exe,0,ALL,False,none,-1,-1,False,False,0,False,False,19,0]
+[FortniteClient-Win64-Shipping.exe,0,0XFF,False,none,-1,-1,False,False,0,False,False,19,0]
 
 # ---- Dedicated clean cores: the heavy engine threads, isolated ----
-GameThread=15,1,False,-1,-1,-1,0,False,False
-RenderThread 0=15,3,False,-1,-1,-1,0,False,False
-RHISubmissionThread=15,5,False,-1,-1,-1,0,False,False
-RHIThread=15,7,False,-1,-1,-1,0,False,False
+GameThread=15,0X2,False,-1,-1,-1,0,False,False
+RenderThread 0=15,0X8,False,-1,-1,-1,0,False,False
+RHISubmissionThread=15,0X20,False,-1,-1,-1,0,False,False
+RHIThread=15,0X80,False,-1,-1,-1,0,False,False
 
-# ---- GPU interrupt thread on the GPU IRQ core (6); mostly sleeps ----
-RHIInterruptThread=15,6,True,-1,-1,-1,0,False,False
+# ---- GPU interrupt thread on the GPU core (6 = 0X40); mostly sleeps ----
+RHIInterruptThread=15,0X40,True,-1,-1,-1,0,False,False
 
-# ---- Input thread next to the USB IRQ core (2) for lowest latency ----
-WindowsRawInputThread=15,2,False,-1,-1,-1,0,False,False
+# ---- Input thread on the USB core (2 = 0X4) for lowest latency ----
+WindowsRawInputThread=15,0X4,False,-1,-1,-1,0,False,False
 
-# ---- Audio threads on the audio IRQ core (4) ----
-AudioMixerNullCallbackThread=0,4,True,-1,-1,-1,0,False,False
-AudioMixerRenderThread(2)=0,4,True,-1,-1,-1,0,False,False
-XAudio2_9.dll+0x341D0=-15,4,True,-1,-1,-1,0,False,False
+# ---- Audio threads on the audio core (4 = 0X10) ----
+AudioMixerNullCallbackThread=0,0X10,True,-1,-1,-1,0,False,False
+AudioMixerRenderThread(2)=0,0X10,True,-1,-1,-1,0,False,False
+XAudio2_9.dll+0x341D0=-15,0X10,True,-1,-1,-1,0,False,False
 
-# ---- Network / online threads on the NIC IRQ core (0) ----
-RtcNetworkThread=0,0,True,-1,-1,-1,0,False,False
-RtcWorkerThread=0,0,True,-1,-1,-1,0,False,False
-OnlineAsyncTaskThreadMcp DefaultInstance=-15,0,True,-1,-1,-1,0,False,False
-ThreadedTickWebSocketThread=-15,0,True,-1,-1,-1,0,False,False
+# ---- Network / online threads on the NIC core (0 = 0X1) ----
+RtcNetworkThread=0,0X1,True,-1,-1,-1,0,False,False
+RtcWorkerThread=0,0X1,True,-1,-1,-1,0,False,False
+OnlineAsyncTaskThreadMcp DefaultInstance=-15,0X1,True,-1,-1,-1,0,False,False
+ThreadedTickWebSocketThread=-15,0X1,True,-1,-1,-1,0,False,False
 
-# ---- Background / worker / async pool: single device cores only ----
-# Round-robined across 0,2,4,6 so the pool stays off the clean cores
-# (1,3,5,7) while spreading over every device core collectively.
-Background Worker (Standby #0)=-15,0,True,-1,-1,-1,0,False,False
-Background Worker (Standby #1)=-15,2,True,-1,-1,-1,0,False,False
-Background Worker (Standby #2)=-15,4,True,-1,-1,-1,0,False,False
-Background Worker (Standby #3)=-15,6,True,-1,-1,-1,0,False,False
-Background Worker (Standby #4)=-15,0,True,-1,-1,-1,0,False,False
-Background Worker (Standby #5)=-15,2,True,-1,-1,-1,0,False,False
-Background Worker (Standby #6)=-15,4,True,-1,-1,-1,0,False,False
-Background Worker (Standby #7)=-15,6,True,-1,-1,-1,0,False,False
-Background Worker (Standby #8)=-15,0,True,-1,-1,-1,0,False,False
-Background Worker (Standby #9)=-15,2,True,-1,-1,-1,0,False,False
-Background Worker #0=-15,4,True,-1,-1,-1,0,False,False
-Background Worker #1=-15,6,True,-1,-1,-1,0,False,False
-Background Worker #2=-15,0,True,-1,-1,-1,0,False,False
-Background Worker #3=-15,2,True,-1,-1,-1,0,False,False
-Background Worker #4=-15,4,True,-1,-1,-1,0,False,False
-Background Worker #5=-15,6,True,-1,-1,-1,0,False,False
-Background Worker #6=-15,0,True,-1,-1,-1,0,False,False
-Background Worker #7=-15,2,True,-1,-1,-1,0,False,False
-Background Worker #8=-15,4,True,-1,-1,-1,0,False,False
-Background Worker #9=-15,6,True,-1,-1,-1,0,False,False
-Background Worker #10=-15,0,True,-1,-1,-1,0,False,False
-Background Worker #11=-15,2,True,-1,-1,-1,0,False,False
-Foreground Worker (Standby #0)=-15,4,True,-1,-1,-1,0,False,False
-Foreground Worker (Standby #1)=-15,6,True,-1,-1,-1,0,False,False
-GameClipsWorker=-15,0,True,-1,-1,-1,0,False,False
-FAsyncLoadingThread=-15,2,True,-1,-1,-1,0,False,False
-FAsyncWriter_FortniteGame=-15,4,True,-1,-1,-1,0,False,False
-FGameThreadHitchHeartBeatThreaded=-15,6,True,-1,-1,-1,0,False,False
-FHeartBeatThread=-15,0,True,-1,-1,-1,0,False,False
-FMediaTicker=-15,2,True,-1,-1,-1,0,False,False
-FMessageBus.DefaultBus.Router=-15,4,True,-1,-1,-1,0,False,False
-RTHeartBeat 0=-15,6,True,-1,-1,-1,0,False,False
-ScreenSaverInhibitor=-15,0,True,-1,-1,-1,0,False,False
-Electra audio segment loader=-15,2,True,-1,-1,-1,0,False,False
-Electra::ExecAsync=-15,4,True,-1,-1,-1,0,False,False
-ElectraHTTPStream=-15,6,True,-1,-1,-1,0,False,False
-ElectraPlayer::Audio decoder=-15,0,True,-1,-1,-1,0,False,False
-ElectraPlayer::EventDispatch=-15,2,True,-1,-1,-1,0,False,False
-ElectraPlayer::SharedWorker=-15,4,True,-1,-1,-1,0,False,False
+# ---- Background / worker / async pool: device cores only (0X55) ----
+Background Worker (Standby #0)=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker (Standby #1)=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker (Standby #2)=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker (Standby #3)=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker (Standby #4)=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker (Standby #5)=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker (Standby #6)=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker (Standby #7)=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker (Standby #8)=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker (Standby #9)=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker #0=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker #1=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker #2=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker #3=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker #4=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker #5=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker #6=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker #7=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker #8=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker #9=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker #10=-15,0X55,True,-1,-1,-1,0,False,False
+Background Worker #11=-15,0X55,True,-1,-1,-1,0,False,False
+Foreground Worker (Standby #0)=-15,0X55,True,-1,-1,-1,0,False,False
+Foreground Worker (Standby #1)=-15,0X55,True,-1,-1,-1,0,False,False
+GameClipsWorker=-15,0X55,True,-1,-1,-1,0,False,False
+FAsyncLoadingThread=-15,0X55,True,-1,-1,-1,0,False,False
+FAsyncWriter_FortniteGame=-15,0X55,True,-1,-1,-1,0,False,False
+FGameThreadHitchHeartBeatThreaded=-15,0X55,True,-1,-1,-1,0,False,False
+FHeartBeatThread=-15,0X55,True,-1,-1,-1,0,False,False
+FMediaTicker=-15,0X55,True,-1,-1,-1,0,False,False
+FMessageBus.DefaultBus.Router=-15,0X55,True,-1,-1,-1,0,False,False
+RTHeartBeat 0=-15,0X55,True,-1,-1,-1,0,False,False
+ScreenSaverInhibitor=-15,0X55,True,-1,-1,-1,0,False,False
+Electra audio segment loader=-15,0X55,True,-1,-1,-1,0,False,False
+Electra::ExecAsync=-15,0X55,True,-1,-1,-1,0,False,False
+ElectraHTTPStream=-15,0X55,True,-1,-1,-1,0,False,False
+ElectraPlayer::Audio decoder=-15,0X55,True,-1,-1,-1,0,False,False
+ElectraPlayer::EventDispatch=-15,0X55,True,-1,-1,-1,0,False,False
+ElectraPlayer::SharedWorker=-15,0X55,True,-1,-1,-1,0,False,False

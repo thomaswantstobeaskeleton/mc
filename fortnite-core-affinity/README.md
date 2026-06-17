@@ -1,11 +1,40 @@
 # Fortnite core-affinity layout — i9-9900 (8C/8T, HT OFF)
 
-Optimized `[FortniteClient-Win64-Shipping.exe ...]` block for `GAME_PRIORITY.GCFG`
-(ProcRipper Config Tool v3.0.0 format), tuned for a CPU where device interrupts
-are already pinned to specific cores.
+Optimized configs for ProcRipper Config Tool v3.0.0, tuned for a CPU where
+device interrupts are already pinned to specific cores. Affinity is expressed as
+a **hex bitmask** (see below), the form the tool itself emits.
 
-Drop-in file: [`FortniteClient.gcfg`](./FortniteClient.gcfg) — paste it over the
-existing Fortnite block in your `GAME_PRIORITY.GCFG`.
+Files in this folder:
+
+| File | Goes into | Purpose |
+|------|-----------|---------|
+| [`FortniteClient.gcfg`](./FortniteClient.gcfg) | `GAME_PRIORITY.GCFG` | the Fortnite per-thread block (paste over the existing one) |
+| [`PROC_PRIORITY.gcfg`](./PROC_PRIORITY.gcfg) | `PROC_PRIORITY.GCFG` | the full system/background config, rebuilt to keep every process off the clean game cores |
+| [`PROC_PRIORITY-review.md`](./PROC_PRIORITY-review.md) | — | what changed in the system config and why |
+
+## Affinity bitmask reference
+
+Affinity is a hex bitmask where **bit N = core N** (the tool already uses this —
+`0X2` appears in `audiodg`). This is the only way to target the *non-contiguous*
+device cores in a single field.
+
+| Cores | Bitmask |
+|-------|---------|
+| 0 | `0X1` |
+| 1 | `0X2` |
+| 2 | `0X4` |
+| 3 | `0X8` |
+| 4 | `0X10` |
+| 5 | `0X20` |
+| 6 | `0X40` |
+| 7 | `0X80` |
+| **0,2,4,6** (all device cores) | **`0X55`** |
+| **1,3,5,7** (all clean cores) | **`0XAA`** |
+| all 8 | `0XFF` |
+
+> Verify once before trusting it: set a single thread to `0X55`, launch, and
+> confirm in Task Manager / Process Lasso that it sits on cores 0,2,4,6. If your
+> build rejects hex masks, the previous single-core/range forms are the fallback.
 
 ## Your hardware / starting point
 
@@ -27,14 +56,19 @@ each of the four heavy engine threads its own core.
 
 | Core | Device | Fortnite threads pinned here | Why |
 |------|--------|------------------------------|-----|
-| **0** | Ethernet | `RtcNetworkThread`, `RtcWorkerThread`, `OnlineAsyncTaskThreadMcp`, `ThreadedTickWebSocketThread` | Network threads on the NIC IRQ core, off the game cores |
-| **1** | — (clean) | **`GameThread` (alone)** | Heaviest thread, fully isolated |
-| **2** | USB | `WindowsRawInputThread` | Input thread on the USB IRQ core → lowest input latency |
-| **3** | — (clean) | **`RenderThread 0` (alone)** | Second-heaviest thread, fully isolated |
-| **4** | Audio | audio mixer + XAudio + background pool | Audio threads on the audio IRQ core |
-| **5** | — (clean, newly free) | **`RHISubmissionThread` (alone)** | GPU command-submission worker — real per-frame work, now isolated instead of sharing the GPU core |
-| **6** | GPU | `RHIInterruptThread` + background pool | Interrupt thread next to the GPU IRQ; it mostly sleeps on a GPU fence so the wake-up is same-core |
-| **7** | — (clean) | **`RHIThread` (alone)** | GPU-facing engine thread, fully isolated |
+| Core | Device | Mask | Fortnite threads pinned here |
+|------|--------|------|------------------------------|
+| **0** | Ethernet | `0X1` | `RtcNetworkThread`, `RtcWorkerThread`, `OnlineAsyncTaskThreadMcp`, `ThreadedTickWebSocketThread` (+ background) |
+| **1** | — (clean) | `0X2` | **`GameThread` (alone)** |
+| **2** | USB | `0X4` | `WindowsRawInputThread` (+ background) |
+| **3** | — (clean) | `0X8` | **`RenderThread 0` (alone)** |
+| **4** | Audio | `0X10` | audio mixer + XAudio (+ background) |
+| **5** | — (clean) | `0X20` | **`RHISubmissionThread` (alone)** |
+| **6** | GPU | `0X40` | `RHIInterruptThread` (+ background) |
+| **7** | — (clean) | `0X80` | **`RHIThread` (alone)** |
+
+Background/worker pool → `0X55` (cores 0,2,4,6), so it can use any device core
+but never a clean game core.
 
 ### What goes on core 5
 
@@ -52,48 +86,23 @@ Alternative if you care more about input jitter than GPU-submit isolation: put
 GPU core 6. I did **not** do this because the input thread is tiny and gains more
 from sitting on the USB IRQ core (2) than from a whole dedicated core.
 
-## Syntax — important
+## Syntax
 
-Thread lines in this format are **comma-delimited** with a fixed shape:
+Thread lines are **comma-delimited** with a fixed 9-field shape:
 
 ```
 ThreadName=Priority,Affinity,DisableBoost,-1,-1,-1,0,False,False   (9 fields)
 ```
 
-The **Affinity is a single token**. A comma list such as `0,2,4,6` does **not**
-work in a thread line: the commas are read as additional fields, so the row is
-corrupted (`DisableBoost` becomes `2`, the affinity collapses to core `0`, etc.).
-That's why every real line in your config expresses multi-core affinity as a
-**range** (`6-7`, `0-1`) or a `GROUP:`, never a comma list. The `0,2,4,6` shown
-in the format header is just a generic description of the affinity concept — it
-is not a row that can be written verbatim.
+The Affinity is a **single token**. With the hex bitmask we no longer need
+ranges/GROUPs or the (invalid) comma list `0,2,4,6` — `0X55` is one token that
+means cores 0,2,4,6. Every row in both files was validated to keep exactly the
+right field count (9 for thread lines, 14 for process headers).
 
-The only Affinity tokens that are safe in a thread line (and all match tokens
-seen in real rows of your config) are:
-
-| Token | Meaning |
-|-------|---------|
-| `ALL` | every core |
-| `5` | a single core |
-| `4-6` | a contiguous range |
-| `GROUP:NAME` | a named group (bounds come from later fields) |
-
-Every line in `FortniteClient.gcfg` uses `ALL` or a single core, so the file is
-field-count-correct (verified: all rows = 9 fields).
-
-## Background pool
-
-Your device cores (0, 2, 4, 6) are **non-contiguous**, so they can't be put in
-one safe range token, and a comma list isn't allowed. The background/worker pool
-is therefore pinned to **single device cores, round-robined across 0/2/4/6**, so
-it stays completely off the clean cores `1/3/5/7` while still spreading over
-every device core collectively. At IDLE priority (`-15`) it only runs when those
-device cores have nothing else to do, so it won't disturb audio, GPU, network,
-or input.
-
-(If you'd rather let the pool migrate freely, set those lines to `ALL` instead —
-at IDLE priority they'll still be preempted by the pinned priority-15 threads on
-1/3/5/7, but they would be allowed to touch the clean cores when idle.)
+Why the bitmask is better here: your device cores (0,2,4,6) are non-contiguous,
+so a range (`4-6`) can't express them and a comma list breaks the row. A bitmask
+has neither problem — it's the tool's native affinity form and the cleanest fit
+for this layout.
 
 ---
 
