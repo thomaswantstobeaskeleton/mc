@@ -1,9 +1,14 @@
 # `PROC_PRIORITY.gcfg` — system/background config (bitmask rebuild)
 
 This is the **system/background** process config, rebuilt so every process is
-confined to the **device cores (0,2,4,6 = `0X55`)** and can never touch the
-**clean game cores (1,3,5,7)**. Drop-in file: [`PROC_PRIORITY.gcfg`](./PROC_PRIORITY.gcfg)
-— it replaces your whole `PROC_PRIORITY.GCFG`.
+confined to **`0X51` (cores 0,4,6)** — the device cores *except* the input core
+(2) — and can never touch the **clean game cores (1,3,5,7)** or the **input core
+(2)**. Drop-in file: [`PROC_PRIORITY.gcfg`](./PROC_PRIORITY.gcfg) — it replaces
+your whole `PROC_PRIORITY.GCFG`.
+
+Core 2 is excluded because of the 8K mouse + 8K keyboard on the USB controller
+(~16K interrupt completions/sec): it's kept clear of system/background work so
+the input path stays jitter-free. See the README for details.
 
 ## Why this was needed
 
@@ -24,7 +29,7 @@ priority-15 threads straight onto your render-pipeline cores.
 
 A single, uniform transformation across all 89 process blocks:
 
-- **Affinity → `0X55`** (cores 0,2,4,6) on every process header *and* every
+- **Affinity → `0X51`** (cores 0,4,6) on every process header *and* every
   thread line. Previously these were `ALL`, `AUTO`, `GROUP:DWM`, `GROUP:POWERSAVE`,
   ranges, or `0X2`.
 - **Park range fields zeroed** (the `start,end` pair after `DisableBoost`/`GpuPriority`
@@ -46,20 +51,22 @@ range tokens remain.
 
 - **Idle vs. confined.** Most of these were already priority `-15` (IDLE), so
   they'd yield to your priority-15 game threads even on a shared core. Confining
-  them to `0X55` is the belt-and-suspenders version: they now *physically can't*
-  land on a clean core.
+  them to `0X51` is the belt-and-suspenders version: they now *physically can't*
+  land on a clean core or the input core.
 - **Kernel/pseudo processes** (`System`, `Idle`, `Registry`, `smss`) were
   transformed for consistency, but affinity on these is often ignored by Windows —
   harmless either way.
-- **Finer pinning (optional).** Uniform `0X55` lets every system process roam the
-  four device cores. If you'd rather match services to their device IRQ core, use
-  these masks instead of `0X55` on the relevant blocks:
+- **Finer pinning (optional).** Uniform `0X51` lets every system process roam
+  cores 0,4,6. If you'd rather match services to their device IRQ core, use these
+  masks instead of `0X51` on the relevant blocks:
   - audio services (`audiodg`, svchost `AudioSrv`/`AudioEndpointBuilder`, Discord
     audio threads) → `0X10` (core 4)
   - network services (svchost `Tcpip`/`Dnscache`/`Dhcp`/`dnsrslvr`) → `0X1` (core 0)
-  - HID (svchost `hidserv`) → `0X4` (core 2)
+  - HID (svchost `hidserv`) → `0X4` (core 2). Note this is the one case where you
+    might *intentionally* put a service back on the input core, for HID locality —
+    weigh it against keeping core 2 clear.
 - **`audiodg → AudioRenderThread`** was `0X2` (= core 1, your GameThread) in the
-  original — a real misfire. It's now `0X55` (and could be `0X10` for the audio
+  original — a real misfire. It's now `0X51` (and could be `0X10` for the audio
   core specifically).
 
 See [`README.md`](./README.md) for the bitmask reference table and the Fortnite

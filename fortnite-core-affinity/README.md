@@ -28,12 +28,13 @@ device cores in a single field.
 | 5 | `0X20` |
 | 6 | `0X40` |
 | 7 | `0X80` |
-| **0,2,4,6** (all device cores) | **`0X55`** |
-| **1,3,5,7** (all clean cores) | **`0XAA`** |
+| **0,2,4,6** (all device cores) | `0X55` |
+| **0,4,6** (device cores minus the input core 2) | **`0X51`** |
+| **1,3,5,7** (all clean cores) | `0XAA` |
 | all 8 | `0XFF` |
 
-> Verify once before trusting it: set a single thread to `0X55`, launch, and
-> confirm in Task Manager / Process Lasso that it sits on cores 0,2,4,6. If your
+> Verify once before trusting it: set a single thread to `0X51`, launch, and
+> confirm in Task Manager / Process Lasso that it sits on cores 0,4,6. If your
 > build rejects hex masks, the previous single-core/range forms are the fallback.
 
 ## Your hardware / starting point
@@ -60,15 +61,35 @@ each of the four heavy engine threads its own core.
 |------|--------|------|------------------------------|
 | **0** | Ethernet | `0X1` | `RtcNetworkThread`, `RtcWorkerThread`, `OnlineAsyncTaskThreadMcp`, `ThreadedTickWebSocketThread` (+ background) |
 | **1** | — (clean) | `0X2` | **`GameThread` (alone)** |
-| **2** | USB | `0X4` | `WindowsRawInputThread` (+ background) |
+| **2** | USB | `0X4` | `WindowsRawInputThread` only — dedicated input core (8K mouse + kbd) |
 | **3** | — (clean) | `0X8` | **`RenderThread 0` (alone)** |
 | **4** | Audio | `0X10` | audio mixer + XAudio (+ background) |
 | **5** | — (clean) | `0X20` | **`RHISubmissionThread` (alone)** |
 | **6** | GPU | `0X40` | `RHIInterruptThread` (+ background) |
 | **7** | — (clean) | `0X80` | **`RHIThread` (alone)** |
 
-Background/worker pool → `0X55` (cores 0,2,4,6), so it can use any device core
-but never a clean game core.
+Background/worker pool → `0X51` (cores 0,4,6) — every device core **except the
+input core 2** — so it never touches a clean game core *or* the input core.
+
+### Why core 2 is left alone (8K mouse + 8K keyboard)
+
+With an 8000 Hz mouse and 8000 Hz keyboard both on the USB controller (core 2),
+that core fields up to ~16,000 interrupt completions per second. It's not
+saturated — each DPC is only microseconds — but you don't want extra work
+competing with the input path and adding jitter. So core 2 is treated as a
+**dedicated input core**: it runs only the USB DPCs (kernel, set by your IRQ
+affinity) plus `WindowsRawInputThread` (priority 15, mask `0X4`). The background
+pool (`0X51`) and the system processes are kept off it.
+
+If you ever decide you don't need a dedicated input core, switch the background
+pool back to `0X55` to also use core 2.
+
+Optional, beyond these files: at 8K each, the mouse and keyboard are each a
+meaningful DPC source. If they sit on the **same** USB controller, both hit
+core 2. If your board exposes a second USB controller, putting the keyboard on
+it and pinning that controller's IRQ to a different core (an IRQ-affinity change,
+done where you set "USB → core 2", not in these `.gcfg` files) would halve the
+DPC load on core 2.
 
 ### What goes on core 5
 
@@ -95,8 +116,8 @@ ThreadName=Priority,Affinity,DisableBoost,-1,-1,-1,0,False,False   (9 fields)
 ```
 
 The Affinity is a **single token**. With the hex bitmask we no longer need
-ranges/GROUPs or the (invalid) comma list `0,2,4,6` — `0X55` is one token that
-means cores 0,2,4,6. Every row in both files was validated to keep exactly the
+ranges/GROUPs or the (invalid) comma list `0,2,4,6` — `0X51` is one token that
+means cores 0,4,6. Every row in both files was validated to keep exactly the
 right field count (9 for thread lines, 14 for process headers).
 
 Why the bitmask is better here: your device cores (0,2,4,6) are non-contiguous,
