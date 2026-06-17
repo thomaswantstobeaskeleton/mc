@@ -1,0 +1,79 @@
+# ============================================================
+# Fortnite per-thread core layout for an i9-9900 (8C/8T, HT OFF)
+# Logical CPUs 0-7. Device IRQ/affinity already pinned by the user:
+#   Core 0 = Ethernet/NIC      Core 2 = USB
+#   Core 4 = Audio controller  Core 5 = Audio controller
+#   Core 6 = GPU
+# "Clean" cores (no device IRQ load): 1, 3, 7  -> reserved for the
+# three heavy, latency-critical engine threads, one each.
+#
+# IMPORTANT: thread lines are comma-delimited, so the affinity field
+# must NOT contain commas. Use a single core (e.g. 1) or a contiguous
+# range (e.g. 4-5 / 4-6). Non-contiguous masks like 0,2,4,5,6 break the
+# parser in per-thread lines, so the background pool uses 4-6.
+# ============================================================
+[FortniteClient-Win64-Shipping.exe,0,ALL,False,none,-1,-1,False,False,0,False,False,19,0]
+
+# ---- Dedicated clean cores: the big 3 engine threads, isolated ----
+GameThread=15,1,False,-1,-1,-1,0,False,False
+RenderThread 0=15,3,False,-1,-1,-1,0,False,False
+RHIThread=15,7,False,-1,-1,-1,0,False,False
+
+# ---- GPU-facing tail, parked on the GPU IRQ core (6) ----
+RHISubmissionThread=15,6,False,-1,-1,-1,0,False,False
+RHIInterruptThread=15,6,True,-1,-1,-1,0,False,False
+
+# ---- Input thread next to the USB IRQ core (2) for lowest latency ----
+WindowsRawInputThread=15,2,False,-1,-1,-1,0,False,False
+
+# ---- Audio threads on the audio IRQ cores (4-5) ----
+AudioMixerNullCallbackThread=0,4-5,True,-1,-1,-1,0,False,False
+AudioMixerRenderThread(2)=0,4-5,True,-1,-1,-1,0,False,False
+XAudio2_9.dll+0x341D0=-15,4-5,True,-1,-1,-1,0,False,False
+
+# ---- Network / online threads on the NIC IRQ core (0) ----
+RtcNetworkThread=0,0,True,-1,-1,-1,0,False,False
+RtcWorkerThread=0,0,True,-1,-1,-1,0,False,False
+OnlineAsyncTaskThreadMcp DefaultInstance=-15,0,True,-1,-1,-1,0,False,False
+ThreadedTickWebSocketThread=-15,0,True,-1,-1,-1,0,False,False
+
+# ---- Background / worker / async pool: cores 4-6, kept OFF 1/3/7 ----
+Background Worker (Standby #0)=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker (Standby #1)=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker (Standby #2)=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker (Standby #3)=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker (Standby #4)=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker (Standby #5)=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker (Standby #6)=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker (Standby #7)=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker (Standby #8)=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker (Standby #9)=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker #0=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker #1=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker #2=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker #3=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker #4=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker #5=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker #6=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker #7=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker #8=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker #9=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker #10=-15,4-6,True,-1,-1,-1,0,False,False
+Background Worker #11=-15,4-6,True,-1,-1,-1,0,False,False
+Foreground Worker (Standby #0)=-15,4-6,True,-1,-1,-1,0,False,False
+Foreground Worker (Standby #1)=-15,4-6,True,-1,-1,-1,0,False,False
+GameClipsWorker=-15,4-6,True,-1,-1,-1,0,False,False
+FAsyncLoadingThread=-15,4-6,True,-1,-1,-1,0,False,False
+FAsyncWriter_FortniteGame=-15,4-6,True,-1,-1,-1,0,False,False
+FGameThreadHitchHeartBeatThreaded=-15,4-6,True,-1,-1,-1,0,False,False
+FHeartBeatThread=-15,4-6,True,-1,-1,-1,0,False,False
+FMediaTicker=-15,4-6,True,-1,-1,-1,0,False,False
+FMessageBus.DefaultBus.Router=-15,4-6,True,-1,-1,-1,0,False,False
+RTHeartBeat 0=-15,4-6,True,-1,-1,-1,0,False,False
+ScreenSaverInhibitor=-15,4-6,True,-1,-1,-1,0,False,False
+Electra audio segment loader=-15,4-6,True,-1,-1,-1,0,False,False
+Electra::ExecAsync=-15,4-6,True,-1,-1,-1,0,False,False
+ElectraHTTPStream=-15,4-6,True,-1,-1,-1,0,False,False
+ElectraPlayer::Audio decoder=-15,4-6,True,-1,-1,-1,0,False,False
+ElectraPlayer::EventDispatch=-15,4-6,True,-1,-1,-1,0,False,False
+ElectraPlayer::SharedWorker=-15,4-6,True,-1,-1,-1,0,False,False
