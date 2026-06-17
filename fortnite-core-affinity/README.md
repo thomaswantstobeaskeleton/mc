@@ -52,18 +52,48 @@ Alternative if you care more about input jitter than GPU-submit isolation: put
 GPU core 6. I did **not** do this because the input thread is tiny and gains more
 from sitting on the USB IRQ core (2) than from a whole dedicated core.
 
-## Background pool: `0,2,4,6`
+## Syntax — important
 
-The background/worker pool is pinned to the even (device) cores `0,2,4,6` so it
-can never touch the clean cores `1/3/5/7`. At IDLE priority (`-15`) it only runs
-when those device cores have nothing else to do, so it won't disturb audio, GPU,
-network, or input.
+Thread lines in this format are **comma-delimited** with a fixed shape:
 
-`0,2,4,6` is listed verbatim as a valid affinity in the format's own docs
-("Use only even cores"), so it's used directly. Note that `.GCFG` thread lines
-are otherwise comma-delimited; **if your specific build rejects a comma list in a
-per-thread affinity field, replace `0,2,4,6` on those lines with a single device
-core** (e.g. `4` or `6`). Single cores and ranges (`6-7`) are always accepted.
+```
+ThreadName=Priority,Affinity,DisableBoost,-1,-1,-1,0,False,False   (9 fields)
+```
+
+The **Affinity is a single token**. A comma list such as `0,2,4,6` does **not**
+work in a thread line: the commas are read as additional fields, so the row is
+corrupted (`DisableBoost` becomes `2`, the affinity collapses to core `0`, etc.).
+That's why every real line in your config expresses multi-core affinity as a
+**range** (`6-7`, `0-1`) or a `GROUP:`, never a comma list. The `0,2,4,6` shown
+in the format header is just a generic description of the affinity concept — it
+is not a row that can be written verbatim.
+
+The only Affinity tokens that are safe in a thread line (and all match tokens
+seen in real rows of your config) are:
+
+| Token | Meaning |
+|-------|---------|
+| `ALL` | every core |
+| `5` | a single core |
+| `4-6` | a contiguous range |
+| `GROUP:NAME` | a named group (bounds come from later fields) |
+
+Every line in `FortniteClient.gcfg` uses `ALL` or a single core, so the file is
+field-count-correct (verified: all rows = 9 fields).
+
+## Background pool
+
+Your device cores (0, 2, 4, 6) are **non-contiguous**, so they can't be put in
+one safe range token, and a comma list isn't allowed. The background/worker pool
+is therefore pinned to **single device cores, round-robined across 0/2/4/6**, so
+it stays completely off the clean cores `1/3/5/7` while still spreading over
+every device core collectively. At IDLE priority (`-15`) it only runs when those
+device cores have nothing else to do, so it won't disturb audio, GPU, network,
+or input.
+
+(If you'd rather let the pool migrate freely, set those lines to `ALL` instead —
+at IDLE priority they'll still be preempted by the pinned priority-15 threads on
+1/3/5/7, but they would be allowed to touch the clean cores when idle.)
 
 ---
 
